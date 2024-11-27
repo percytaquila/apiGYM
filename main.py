@@ -122,6 +122,15 @@ def recommend_exercises(
     experience_level: str = Query(..., description="Nivel de experiencia: Principiante, Intermedio, Avanzado")
 ):
     
+    # Verificar si ya existe una rutina para el usuario
+    existing_routine = conn.fetch_user_routine(user_id)
+    if existing_routine and existing_routine["routine"]:
+        return {
+            "message": "Rutina ya existente para este usuario",
+            "routine": existing_routine["routine"]
+        }
+
+
     level_config = {
         "Principiante": {"days": 3, "exercises_per_day": 6},
         "Intermedio": {"days": 4, "exercises_per_day": 8},
@@ -378,3 +387,23 @@ def get_daily_recommendations(
             }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al consultar las recomendaciones: {str(e)}")
+    
+
+@app.get("/api/exercises/{exercise_id}")
+def get_exercise(exercise_id: int):
+    try:
+        # Llamada al método para obtener el ejercicio
+        exercise = conn.fetch_exercise_by_id(exercise_id)
+
+         # Validar si se encontró el ejercicio
+        if not exercise:
+            raise HTTPException(status_code=404, detail="Ejercicio no encontrado")
+
+        # Devolver la información del ejercicio
+        return {
+            "message": "Ejercicio encontrado",
+            "exercise": exercise
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al consultar el ejercicio: {str(e)}")

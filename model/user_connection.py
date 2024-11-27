@@ -180,7 +180,7 @@ class UserConnection():
     
     def get_random_exercises(self, body_part, limit):
         query = """
-                SELECT id, name_es, body_part_es, target_es
+                SELECT id, name_es, equipment_es, target_es
                 FROM ejercicios
                 WHERE body_part_es = %s
                 ORDER BY RANDOM()
@@ -191,7 +191,7 @@ class UserConnection():
             result = cur.fetchall()
 
         return [
-            {"id": row[0], "name_es": row[1], "body_part_es": row[2], "target_es": row[3]}
+            {"id": row[0], "name_es": row[1], "equipment_es": row[2], "target_es": row[3]}
             for row in result
         ]
     
@@ -417,6 +417,65 @@ class UserConnection():
 
         except Exception as e:
             raise Exception(f"Error al insertar recomendaciones: {str(e)}")
+        
+
+    # Método para obtener un ejercicio por ID desde la base de datos
+    def fetch_exercise_by_id(self, exercise_id: int):
+        try:
+            # Consulta SQL
+            query = """
+            SELECT id, name_es, body_part_es, target_es, equipment_es, instructions_es, gif_url 
+            FROM ejercicios
+            WHERE id = %s
+            """
+            with self.conn.cursor() as cur:
+                cur.execute(query, (exercise_id,))
+                result = cur.fetchone()
+
+            if result:
+                return {
+                    "id": result[0],
+                    "name_es": result[1],
+                    "body_part_es": result[2],
+                    "target_es": result[3],
+                    "equipment_es": result[4],
+                    "instructions_es": result[5],
+                    "gif_url": result[6],
+                }
+            else:
+                return None
+        except Exception as e:
+            raise Exception(f"Error al consultar la base de datos: {str(e)}")
+
+    def fetch_user_routine(self, usuario_id: int):
+        try:
+            # Consulta SQL
+            query = """
+            SELECT id, usuario_id, rutina
+            FROM public.usuario_rutinas
+            WHERE usuario_id = %s
+            """
+            with self.conn.cursor() as cur:
+                cur.execute(query, (usuario_id,))
+                result = cur.fetchone()
+
+            # Si hay un resultado, devolver la rutina
+            if result:
+                return {
+                    "id": result[0],
+                    "usuario_id": result[1],
+                    "routine": result[2]  # Este será un arreglo JSON desde la base de datos
+                }
+            else:
+                # Si no hay registro, devolver rutina vacía
+                return {
+                    "id": None,
+                    "usuario_id": usuario_id,
+                    "routine": []
+                }
+
+        except Exception as e:
+            raise Exception(f"Error al consultar la base de datos: {str(e)}")
 
     def __def__(self):
         self.conn.close()
