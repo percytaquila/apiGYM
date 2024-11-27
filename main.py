@@ -1,8 +1,9 @@
-import random
+import json
 from fastapi import FastAPI, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from model.user_connection import UserConnection 
+from schema.NutritionPlan_schema import NutritionPlanRequest
 from schema.Progress_schema import ProgressSchema
 from schema.user_schema import UserSchema
 from schema.BiometricUpdate_schema import BiometricUpdateSchema
@@ -12,7 +13,7 @@ from passlib.context import CryptContext
 import numpy as np
 import face_recognition
 import cv2
-
+import cohere
 
 app = FastAPI()
 app.add_middleware(
@@ -22,6 +23,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"]
 )
+
+COHERE_API_KEY = "mmFhYt9j2DRBpEeTv6MhZn6BmD3tzoFmK05zSpsL" 
+co = cohere.Client(COHERE_API_KEY)
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 conn = UserConnection()
@@ -92,7 +96,6 @@ async def update_user(user_id: int, imagen: UploadFile, data: str = Form(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al procesar el vector biométrico: {str(e)}")
     
-
 @app.get("/api/trainers")
 def get_trainers(specialty: str = None):
     try:
@@ -101,7 +104,6 @@ def get_trainers(specialty: str = None):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-
 @app.get("/api/class-details/{id_horario}")
 def get_class_details(id_horario: int):
     try:
@@ -112,7 +114,6 @@ def get_class_details(id_horario: int):
         return JSONResponse(content=trainer_details, media_type="application/json; charset=utf-8")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post("/api/exercises/recommendations")
 def recommend_exercises(
@@ -178,7 +179,6 @@ def recommend_exercises(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al generar la rutina: {str(e)}")
     
-
 @app.get("/api/exercises/routine")
 def get_user_routine(user_id: int = Query(..., description="ID del usuario")):
     try:     
@@ -196,8 +196,6 @@ def get_user_routine(user_id: int = Query(..., description="ID del usuario")):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al consultar la rutina: {str(e)}")
     
-
-
 @app.put("/api/user/update-goals")
 def update_user_goals(update: UpdateUserSchema):
     try:
@@ -214,7 +212,6 @@ def update_user_goals(update: UpdateUserSchema):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al actualizar los objetivos: {str(e)}")
     
-
 @app.post("/api/progress")
 def register_progress(progress: ProgressSchema):
     try:
@@ -231,7 +228,6 @@ def register_progress(progress: ProgressSchema):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al registrar el avance: {str(e)}")
     
-
 @app.get("/api/progress/{usuario_id}")
 def get_user_progress(usuario_id: int):
     try:
@@ -245,7 +241,6 @@ def get_user_progress(usuario_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener el progreso: {str(e)}")
 
-
 @app.delete("/api/progress/{progress_id}")
 def delete_user_progress(progress_id: int):
     try:
@@ -257,7 +252,6 @@ def delete_user_progress(progress_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al eliminar el registro: {str(e)}")
     
-
 @app.get("/api/exercises/body-parts")
 def get_body_parts():
     try:
@@ -266,7 +260,6 @@ def get_body_parts():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener body parts: {str(e)}")
     
-
 @app.get("/api/exercises/by-body-part")
 def get_exercises_by_body_part(
     body_part: str
@@ -278,3 +271,110 @@ def get_exercises_by_body_part(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener ejercicios: {str(e)}")
 
+@app.post("/api/nutrition-plan")
+def obtener_plan_alimenticio(data: NutritionPlanRequest):
+    try:
+        # Cálculo de calorías
+        calorias = conn.calcular_calorias(
+            data.genero,
+            data.edad,
+            data.peso_actual,
+            data.altura,
+            data.nivel_experiencia,
+            data.objetivo,
+        )
+        
+        # Cálculo de macronutrientes
+        macros = conn.calcular_macros(calorias, data.objetivo)
+
+        # Generación de recomendaciones con Cohere
+        prompt = f"""
+        Genera un plan alimenticio para 4 días basado en los siguientes datos:
+        - Género: {data.genero}
+        - Edad: {data.edad}
+        - Peso actual: {data.peso_actual} kg
+        - Altura: {data.altura} cm
+        - Nivel de experiencia: {data.nivel_experiencia}
+        - Objetivo: {data.objetivo}
+        - Calorías calculadas: {calorias} kcal
+        - Macronutrientes (g): Proteínas: {macros["proteinas"]}, Carbohidratos: {macros["carbohidratos"]}, Grasas: {macros["grasas"]}
+
+        Devuelve las recomendaciones en formato JSON con la siguiente estructura:
+        {{
+            "dia 1": {{
+                "desayuno": "Descripción del desayuno",
+                "almuerzo": "Descripción del almuerzo",
+                "cena": "Descripción de la cena",
+                "snack": "Descripción del snack"
+            }},
+            "dia 2": {{
+                "desayuno": "...",
+                "almuerzo": "...",
+                "cena": "...",
+                "snack": "..."
+            }},
+            "dia 3": {{
+                ...
+            }},
+            "dia 4": {{
+                ...
+            }}
+        }}
+        No incluyas explicaciones ni introducciones, solo responde en formato JSON.
+        """
+        
+        # Llamada al modelo de Cohere
+        response = co.chat(
+            model="command-r-plus",
+            message=prompt
+        )
+
+        # Extraer la respuesta de Cohere
+        if hasattr(response, 'text'):
+            raw_recommendations = response.text
+        elif hasattr(response, 'reply'):
+            raw_recommendations = response.reply
+        else:
+            raise AttributeError("No se encontró un atributo adecuado en la respuesta de Cohere")
+        
+        # Convertir la respuesta a JSON limpio
+        try:
+            recommendations = json.loads(raw_recommendations)  # Decodifica la cadena JSON a un objeto
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=500, detail="La IA no devolvió un JSON válido. Revisa el prompt o los datos.")
+        
+        for day, meals in recommendations.items():
+            for meal, description in meals.items():
+                recommendations[day][meal] = description.replace('\n', ' ')
+
+        conn.insert_recommendations(data.id_usuario, recommendations)
+
+        return {
+            "calorias": calorias,
+            "macros": macros,
+            "recomendaciones": recommendations,  # Devuelve un JSON limpio
+        }
+
+    except AttributeError as e:
+        raise HTTPException(status_code=500, detail=f"Error al procesar la solicitud con Cohere: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al generar plan: {str(e)}")
+    
+@app.get("/api/recommendations/daily")
+def get_daily_recommendations(
+    user_id: int = Query(..., description="ID del usuario"),):
+    try:
+        result = conn.fetch_recommendations(user_id)
+
+        if result:
+            return {
+                "message": "Recomendaciones encontradas",
+                "recommendations": result["recomendaciones"],
+            }
+        else:
+            return {
+                "message": "No se encontraron recomendaciones para el usuario",
+                "recommendations": None,
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al consultar las recomendaciones: {str(e)}")

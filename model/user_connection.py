@@ -1,4 +1,5 @@
 import json
+import openai
 import psycopg
 import pickle
 import numpy as np
@@ -285,7 +286,6 @@ class UserConnection():
             # Verificar si se eliminó alguna fila
             return cur.rowcount > 0
         
-
     def get_unique_body_parts(self):
         query = """
             SELECT body_part_es
@@ -316,6 +316,107 @@ class UserConnection():
             return [{"id": row[0], "name_es": row[1]} for row in results]
         except Exception as e:
             raise Exception(f"Error al obtener ejercicios: {str(e)}")
+        
+    def calcular_calorias(self, genero, edad, peso, altura, nivel_experiencia, objetivo):
+        if genero == "masculino":
+            bmr = 10 * peso + 6.25 * altura - 5 * edad + 5
+        else:
+            bmr = 10 * peso + 6.25 * altura - 5 * edad - 161
+
+        # Ajustar según nivel de actividad
+        nivel_actividad = {
+            "Principiante": 1.2,
+            "Intermedio": 1.55,
+            "Avanzado": 1.9
+        }
+        calorias_mantenimiento = bmr * nivel_actividad[nivel_experiencia]
+
+        # Ajustar según objetivo
+        if objetivo == "Bajar de peso":
+            return calorias_mantenimiento - 500
+        elif objetivo == "Ganar masa muscular":
+            return calorias_mantenimiento + 500
+        else:
+            return calorias_mantenimiento
+
+    def calcular_macros(self, calorias, objetivo):
+        if objetivo == "Bajar de peso":
+            macros = {"proteinas": 0.4, "carbohidratos": 0.4, "grasas": 0.2}
+        elif objetivo == "Ganar masa muscular":
+            macros = {"proteinas": 0.3, "carbohidratos": 0.5, "grasas": 0.2}
+        else:  # Mantenerse en forma
+            macros = {"proteinas": 0.3, "carbohidratos": 0.4, "grasas": 0.3}
+
+        return {
+            "proteinas": calorias * macros["proteinas"] / 4,
+            "carbohidratos": calorias * macros["carbohidratos"] / 4,
+            "grasas": calorias * macros["grasas"] / 9,
+        }
+
+    def generar_recomendaciones_alimentos(self, macros):
+        prompt = f"""
+        Basado en las siguientes necesidades nutricionales:
+        - Proteínas: {macros['proteinas']} g
+        - Carbohidratos: {macros['carbohidratos']} g
+        - Grasas: {macros['grasas']} g
+        Genera un plan de alimentación para una semana completa. Considera desayuno, almuerzo, cena y snacks para cada día.
+        """
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-4o-mini",  # Cambia al modelo que prefieras
+                messages=[
+                    {"role": "system", "content": "Eres un experto en nutrición."},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=1500,
+                temperature=0.7,
+            )
+            return response["choices"][0]["message"]["content"]
+        except Exception as e:
+            raise Exception(f"Error al generar recomendaciones: {str(e)}")
+        
+    def fetch_recommendations(self, user_id: int):
+        try:
+            # Consulta SQL
+            query = """
+                SELECT recomendaciones
+                FROM recomendaciones_diarias
+                WHERE id_usuario = %s
+            """
+            with self.conn.cursor() as cur:
+                cur.execute(query, (user_id,))
+                result = cur.fetchone()
+
+            if result:
+                return {
+                    "recomendaciones": result[0],  # Campo JSON de las recomendaciones
+                }
+            else:
+                return None
+
+        except Exception as e:
+            raise Exception(status_code=500, detail=f"Error al realizar la consulta: {str(e)}")
+
+    def insert_recommendations(self, user_id: int, recommendations: dict):
+
+        try:
+            # Consulta SQL
+            query = """
+                INSERT INTO public.recomendaciones_diarias (id_usuario, recomendaciones)
+                VALUES (%(id_usuario)s, %(recomendaciones)s)
+            """
+            data = {
+                "id_usuario": user_id,
+                "recomendaciones": json.dumps(recommendations)  # Convertir JSON a string para insertar
+            }
+
+            # Ejecutar la consulta
+            with self.conn.cursor() as cur:
+                cur.execute(query, data)
+                self.conn.commit()
+
+        except Exception as e:
+            raise Exception(f"Error al insertar recomendaciones: {str(e)}")
 
     def __def__(self):
         self.conn.close()
